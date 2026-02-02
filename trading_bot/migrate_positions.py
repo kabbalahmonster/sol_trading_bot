@@ -1,34 +1,56 @@
+import argparse
 import json
 
-def merge_positions(file_a, file_b, output_file):
-    # Load JSON data from files
-    with open(file_a, 'r') as f:
+DEFAULT_ACTIVE = "positions.json"
+DEFAULT_STAGING = "positions.staging.json"
+DEFAULT_MERGED = "positions.merged.json"
+
+
+def merge_positions(active_file, new_file, output_file):
+    """Move balances/cost from active positions into a new grid.
+
+    Strategy (same as your original):
+    - Sort NEW positions by sellMin.
+    - For each ACTIVE position with balance/cost, place it into the first NEW slot
+      with a higher sellMin that hasn't been used.
+
+    This helps you migrate open positions forward into an updated grid.
+    """
+
+    with open(active_file, "r", encoding="utf-8") as f:
         positions_a = json.load(f)
-    with open(file_b, 'r') as f:
+    with open(new_file, "r", encoding="utf-8") as f:
         positions_b = json.load(f)
 
-    # Sort positions_b by sellMin
-    positions_b_sorted = sorted(positions_b.values(), key=lambda x: x['sellMin'])
-
-    # Track used positions in positions_b
+    positions_b_sorted = sorted(positions_b.values(), key=lambda x: x["sellMin"])
     used_positions = set()
 
-    # Iterate through positions_a and assign balances and costs to positions_b
     for pos_a in positions_a.values():
-        balance = pos_a['balance']
-        cost = pos_a['cost']
+        balance = int(pos_a.get("balance", 0) or 0)
+        cost = int(pos_a.get("cost", 0) or 0)
+
         if balance > 0 or cost > 0:
             for pos_b in positions_b_sorted:
-                if pos_b['id'] not in used_positions and pos_b['sellMin'] > pos_a['sellMin']:
-                    # Assign balance and cost, and mark position as used
-                    positions_b[pos_b['id']]['balance'] = balance
-                    positions_b[pos_b['id']]['cost'] = cost
-                    used_positions.add(pos_b['id'])
+                if pos_b["id"] not in used_positions and pos_b["sellMin"] > pos_a["sellMin"]:
+                    positions_b[pos_b["id"]]["balance"] = balance
+                    positions_b[pos_b["id"]]["cost"] = cost
+                    used_positions.add(pos_b["id"])
                     break
 
-    # Save the updated positions_b to the output file
-    with open(output_file, 'w') as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         json.dump(positions_b, f, indent=4)
 
-# Example usage
-merge_positions('positions.json', 'new_positions.json', 'merged_positions.json')
+
+def main():
+    ap = argparse.ArgumentParser(description="Migrate balances/costs from active positions.json into a new grid.")
+    ap.add_argument("--active", default=DEFAULT_ACTIVE, help="Existing active positions.json")
+    ap.add_argument("--new", dest="newfile", default=DEFAULT_STAGING, help="New/staging positions file")
+    ap.add_argument("--out", default=DEFAULT_MERGED, help="Merged output file")
+    args = ap.parse_args()
+
+    merge_positions(args.active, args.newfile, args.out)
+    print(f"Merged positions written to {args.out}")
+
+
+if __name__ == "__main__":
+    main()

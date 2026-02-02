@@ -409,6 +409,11 @@ def debug():
         print(getQuote(tokenId))
         time.sleep(3)
 
-#debug()
-
-main()
+if __name__ == "__main__":
+    # Default behavior stays the same (main), but you can do:
+    #   RUN_MODE=debug python main.py
+    mode = os.getenv("RUN_MODE", "main").lower().strip()
+    if mode == "debug":
+        debug()
+    else:
+        main()
