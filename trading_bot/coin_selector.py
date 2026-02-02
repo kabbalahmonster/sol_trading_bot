@@ -218,6 +218,71 @@ def hard_reject(report: Dict[str, Any], cfg: Dict[str, Any]) -> Tuple[bool, List
     return (len(reasons) > 0), reasons
 
 
+def _num(x: Any) -> float:
+    try:
+        if x is None:
+            return 0.0
+        return float(x)
+    except Exception:
+        return 0.0
+
+
+def compute_swing_score(pair: Dict[str, Any]) -> Tuple[float, List[str]]:
+    """Heuristic swing/chop score (0..1) using only free snapshot fields.
+
+    Intuition:
+    - Need activity (txns) and enough volume
+    - Want movement (abs % change) but avoid pure one-way trend
+    """
+
+    notes: List[str] = []
+
+    pc = pair.get("priceChange") or {}
+    tx = pair.get("txns") or {}
+    vol = pair.get("volume") or {}
+    liq = (pair.get("liquidity") or {}).get("usd")
+
+    pc_m5 = abs(_num(pc.get("m5")))
+    pc_h1 = abs(_num(pc.get("h1")))
+    pc_h6 = abs(_num(pc.get("h6")))
+
+    # activity: sum buys+sells
+    tx_h1 = tx.get("h1") or {}
+    buys = _num(tx_h1.get("buys"))
+    sells = _num(tx_h1.get("sells"))
+    txn_cnt = buys + sells
+
+    vol_h1 = _num(vol.get("h1"))
+    liq_usd = _num(liq)
+
+    # normalized components
+    move = clamp((pc_h1 / 15.0) + (pc_m5 / 5.0) * 0.5 + (pc_h6 / 40.0) * 0.25, 0.0, 1.0)
+    churn = clamp(math.log1p(txn_cnt) / math.log1p(400.0), 0.0, 1.0)
+    vliq = 0.0
+    if liq_usd > 0:
+        vliq = clamp((vol_h1 / liq_usd) / 1.0, 0.0, 1.0)  # 1.0 == vol ~= liq in 1h (very active)
+
+    # trend penalty: if m5/h1/h6 are all same sign and large, it may be trending hard (less mean-reverting)
+    raw_m5 = _num(pc.get("m5"))
+    raw_h1 = _num(pc.get("h1"))
+    raw_h6 = _num(pc.get("h6"))
+    same_sign = (raw_m5 > 0 and raw_h1 > 0 and raw_h6 > 0) or (raw_m5 < 0 and raw_h1 < 0 and raw_h6 < 0)
+    trend_pen = 0.0
+    if same_sign and (abs(raw_h6) > 30.0):
+        trend_pen = 0.25
+        notes.append("trend-penalty")
+
+    score = 0.45 * churn + 0.40 * move + 0.15 * vliq
+    score = clamp(score - trend_pen, 0.0, 1.0)
+
+    if txn_cnt < 50:
+        notes.append("low-txns")
+    if vol_h1 < 25_000:
+        notes.append("low-vol")
+
+    return score, notes
+
+
 def compute_health_score(c: Candidate, report: Dict[str, Any], cfg: Dict[str, Any]) -> Tuple[float, List[str]]:
     """Return score (0..1) and explanation reasons."""
     reasons: List[str] = []
@@ -284,7 +349,7 @@ def main():
     ap.add_argument("--config", default=None, help="Optional selector_config.json")
     ap.add_argument("--out", default="shortlist.json", help="Output JSON file")
     ap.add_argument("--md", default="shortlist.md", help="Output markdown summary")
-    ap.add_argument("--limit", type=int, default=DEFAULTS["limit"], help="How many coins to output")
+    ap.add_argument("--limit", type=int, default=DEFAULTS["limit"], help="How many coins to output (per list)")
     args = ap.parse_args()
 
     cfg = load_cfg(args.config)
@@ -385,17 +450,22 @@ def main():
                 }
             )
         else:
-            score, reasons = compute_health_score(c, report, cfg)
+            health, reasons = compute_health_score(c, report, cfg)
+            swing, swing_notes = compute_swing_score(c.pair)
             results.append(
                 {
                     "mint": c.base_mint,
                     "symbol": c.base_symbol,
-                    "health": round(score, 4),
+                    "health": round(health, 4),
+                    "swing": round(swing, 4),
                     "is_pump": c.is_pump,
                     "liquidity_usd": c.liquidity_usd,
                     "volume_h1_usd": c.vol_h1_usd,
                     "age_minutes": c.age_minutes,
                     "dex": c.dex_url,
+                    "dex_pair": c.pair.get("pairAddress"),
+                    "priceChange": (c.pair.get("priceChange") or {}),
+                    "txns": (c.pair.get("txns") or {}),
                     "rugcheck": {
                         "score": report.get("score"),
                         "score_normalised": report.get("score_normalised"),
@@ -403,21 +473,28 @@ def main():
                         "mintAuthority": report.get("mintAuthority"),
                     },
                     "notes": reasons,
+                    "swing_notes": swing_notes,
                 }
             )
 
         time.sleep(cfg["sleep_between_rugchecks_ms"] / 1000.0)
 
-    results.sort(key=lambda x: x["health"], reverse=True)
+    safest = sorted(results, key=lambda x: x["health"], reverse=True)
+    swingiest = sorted(results, key=lambda x: (x["swing"], x["health"]), reverse=True)
 
-    shortlist = results[: cfg["limit"]]
+    limit = int(cfg["limit"])
+    shortlist_safe = safest[:limit]
+    shortlist_swing = swingiest[:limit]
 
     payload = {
         "generated_at": int(time.time()),
         "config": {
-            k: cfg[k]
+            k: cfg.get(k)
             for k in [
+                "discover_source",
                 "discover_query",
+                "discover_queries",
+                "prefer_pump_suffix",
                 "min_liquidity_usd",
                 "min_age_minutes",
                 "min_volume_h1_usd",
@@ -427,7 +504,10 @@ def main():
                 "candidates_max",
             ]
         },
-        "shortlist": shortlist,
+        "lists": {
+            "safest": shortlist_safe,
+            "swingiest": shortlist_swing,
+        },
         "counts": {
             "pairs_seen": len(pairs),
             "candidates_parsed": len(candidates),
@@ -442,8 +522,8 @@ def main():
         json.dump(payload, f, indent=2)
 
     # Simple markdown summary
-    lines = []
-    lines.append(f"# Shortlist (top {len(shortlist)})")
+    lines: List[str] = []
+    lines.append(f"# Shortlists (top {limit} each)")
     lines.append("")
     lines.append(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     lines.append("")
@@ -451,24 +531,33 @@ def main():
     lines.append("```json")
     lines.append(json.dumps(payload["config"], indent=2))
     lines.append("```")
-    lines.append("")
-    lines.append("## Coins")
-    lines.append("")
-    for i, item in enumerate(shortlist, 1):
-        lines.append(
-            f"{i}. **{item['symbol']}** ({'pump' if item['is_pump'] else 'non-pump'}) — health **{item['health']}**\\\n"
-            f"   - liq: ${item['liquidity_usd']:,.0f}, vol1h: ${item['volume_h1_usd']:,.0f}, age: {item['age_minutes']:.0f}m\\\n"
-            f"   - mint: `{item['mint']}`\\\n"
-            f"   - dexscreener: {item['dex']}\\\n"
-            f"   - notes: {', '.join(item.get('notes') or [])}"
-        )
+
+    def render_list(title: str, items: List[Dict[str, Any]]):
         lines.append("")
+        lines.append(f"## {title}")
+        lines.append("")
+        for i, item in enumerate(items, 1):
+            lines.append(
+                f"{i}. **{item['symbol']}** ({'pump' if item['is_pump'] else 'non-pump'}) — "
+                f"health **{item['health']}**, swing **{item['swing']}**\\\n"
+                f"   - liq: ${item['liquidity_usd']:,.0f}, vol1h: ${item['volume_h1_usd']:,.0f}, age: {item['age_minutes']:.0f}m\\\n"
+                f"   - pc(m5/h1/h6): {item.get('priceChange',{}).get('m5','?')}/{item.get('priceChange',{}).get('h1','?')}/{item.get('priceChange',{}).get('h6','?')}\\\n"
+                f"   - txns(h1): {item.get('txns',{}).get('h1',{})}\\\n"
+                f"   - mint: `{item['mint']}`\\\n"
+                f"   - dexscreener: {item['dex']}\\\n"
+                f"   - notes: {', '.join(item.get('notes') or [])}\\\n"
+                f"   - swing_notes: {', '.join(item.get('swing_notes') or [])}"
+            )
+            lines.append("")
+
+    render_list("Safest (highest health)", shortlist_safe)
+    render_list("Swingiest (highest swing, tie-breaker health)", shortlist_swing)
 
     with open(args.md, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
     print(f"Wrote {args.out} and {args.md}")
-    print(f"Passed: {len(results)}  Rejected: {len(rejects)}  Shortlist: {len(shortlist)}")
+    print(f"Passed: {len(results)}  Rejected: {len(rejects)}  Safest: {len(shortlist_safe)}  Swingiest: {len(shortlist_swing)}")
 
 
 if __name__ == "__main__":

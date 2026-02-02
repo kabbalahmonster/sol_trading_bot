@@ -1,6 +1,7 @@
 {
   "discover_source": "dexscreener",
   "discover_queries": ["SOL", "USDC", "Raydium", "Orca"],
+  "limit": 25,
   "candidates_max": 400,
 
   "min_liquidity_usd": 100000,
