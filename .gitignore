@@ -3,3 +3,5 @@ trading_bot/shortlist.md
 trading_bot/selector_history.jsonl
 trading_bot/history_rank.json
 trading_bot/history_rank.md
+trading_bot/swing_rank.json
+trading_bot/swing_rank.md
