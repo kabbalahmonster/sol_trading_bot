@@ -48,27 +48,62 @@ log_file = get_new_log_file()
 sys.stdout = Tee(log_file)
 
 
+# ------------------------------
+# Configuration / Environment
+# ------------------------------
+# Copy .env.example -> .env and fill in values.
+#
+# The Jupiter Ultra SDK uses PRIVATE_KEY for signing.
+# - PRIVATE_KEY can be base58 OR a uint8 array string.
+# - Optional: JUPITER_API_KEY enables the non-lite endpoint.
 
+# Load .env from the current working directory (repo assumes you run from trading_bot/)
 load_dotenv()
-client = UltraApiClient()
+
+# Optional: if JUPITER_API_KEY is set, UltraApiClient will use https://api.jup.ag
+# otherwise it defaults to https://lite-api.jup.ag
+client = UltraApiClient(api_key=os.getenv("JUPITER_API_KEY") or None)
 
 # Define boolean flags to control functionality
 SELLS_ACTIVE = True
 BUYS_ACTIVE = True
 STOPLOSS_ACTIVE = False
-MAX_POSITIONS = 20
-API_KEY = "" #JUPITER API KEY
 
-ticker = "" #TOKEN TICKER
-tokenId = "" #CONTRACT ADDRESS
-sol = "So11111111111111111111111111111111111111112" #WSOL
-amount = 40000000 #0.04 WSOL
+# Max simultaneously open positions (grid slots with balance>0)
+MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", "20"))
+
+# Quote endpoint base (no-key default)
+JUP_QUOTE_BASE = os.getenv("JUP_QUOTE_BASE", "https://lite-api.jup.ag").rstrip("/")
+
+# Token config
+ticker = os.getenv("TICKER", "")  # TOKEN TICKER (for logs only)
+# NOTE: tokenId should be a Solana *mint address* (e.g. endswith 'pump' for pump.fun coins)
+tokenId = os.getenv("TOKEN_MINT", "")  # TOKEN MINT
+
+# Well-known mints
+sol = "So11111111111111111111111111111111111111112"  # WSOL
+
+# Position sizing for buys (lamports). Default 0.04 SOL
+amount = int(os.getenv("AMOUNT_LAMPORTS", "40000000"))
 
 
 def getQuote(id, amount=1000000, max_retries=5, backoff_factor=1):
+    """Get a Jupiter quote for swapping token->WSOL.
+
+    Returns outAmount (string/number) or None.
+
+    Notes:
+    - Uses Jupiter Lite by default (no API key required).
+    - Adds small randomness to the amount to reduce cached responses.
+    """
     amount += random.randint(-1000, 1000)  # Add randomness to the amount
-    url = f"https://api.jup.ag/swap/v1/quote?inputMint={id}&outputMint=So11111111111111111111111111111111111111112&amount={amount}"
-    headers = {'Accept': 'application/json', "x-api-key": API_KEY}
+
+    url = f"{JUP_QUOTE_BASE}/swap/v1/quote?inputMint={id}&outputMint={sol}&amount={amount}"
+
+    headers = {'Accept': 'application/json'}
+    # Optional API key (not required)
+    if os.getenv("JUPITER_API_KEY"):
+        headers["x-api-key"] = os.getenv("JUPITER_API_KEY")
     
     for attempt in range(max_retries):
         try:
@@ -403,9 +438,15 @@ def main():
         client.close()
 
 def debug():
+    """Debug loop: print the current quote every few seconds.
+
+    This is the intended mode for first-time setup of a new coin:
+    1) set TOKEN_MINT
+    2) run debug() to observe the quote scale
+    3) generate positions.json grid using gen_position_json.py
+    4) switch to main()
+    """
     while True:
-        #print("Debugging...")
-        current_quote = getQuote(tokenId)
         print(getQuote(tokenId))
         time.sleep(3)
 
