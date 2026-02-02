@@ -350,6 +350,11 @@ def main():
     ap.add_argument("--out", default="shortlist.json", help="Output JSON file")
     ap.add_argument("--md", default="shortlist.md", help="Output markdown summary")
     ap.add_argument("--limit", type=int, default=DEFAULTS["limit"], help="How many coins to output (per list)")
+    ap.add_argument(
+        "--append-history",
+        default=None,
+        help="Optional path to append JSONL history (one line per run)",
+    )
     args = ap.parse_args()
 
     cfg = load_cfg(args.config)
@@ -486,6 +491,9 @@ def main():
     shortlist_safe = safest[:limit]
     shortlist_swing = swingiest[:limit]
 
+    # Full passed set (sorted by health) so you can inventory all eligible coins
+    passed_all = sorted(results, key=lambda x: x["health"], reverse=True)
+
     payload = {
         "generated_at": int(time.time()),
         "config": {
@@ -508,6 +516,7 @@ def main():
             "safest": shortlist_safe,
             "swingiest": shortlist_swing,
         },
+        "passed": passed_all,
         "counts": {
             "pairs_seen": len(pairs),
             "candidates_parsed": len(candidates),
@@ -521,11 +530,38 @@ def main():
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
 
+    # Optional history append (JSONL)
+    if args.append_history:
+        hist_line = {
+            "generated_at": payload["generated_at"],
+            "config": payload["config"],
+            "counts": payload["counts"],
+            # store only compact per-coin fields to keep the file sane
+            "passed": [
+                {
+                    "mint": x["mint"],
+                    "symbol": x["symbol"],
+                    "health": x["health"],
+                    "swing": x["swing"],
+                    "is_pump": x["is_pump"],
+                    "liquidity_usd": x["liquidity_usd"],
+                    "volume_h1_usd": x["volume_h1_usd"],
+                    "age_minutes": x["age_minutes"],
+                    "dex": x["dex"],
+                }
+                for x in passed_all
+            ],
+        }
+        with open(args.append_history, "a", encoding="utf-8") as hf:
+            hf.write(json.dumps(hist_line, separators=(",", ":")) + "\n")
+
     # Simple markdown summary
     lines: List[str] = []
     lines.append(f"# Shortlists (top {limit} each)")
     lines.append("")
     lines.append(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    lines.append("")
+    lines.append(f"Passed total: {len(passed_all)}")
     lines.append("")
     lines.append("## Config")
     lines.append("```json")
