@@ -1,3 +1,22 @@
+#!/usr/bin/env python3
+"""Migrate balances/costs from an active grid into a new grid.
+
+When you update your grid (new price range, new N positions, different gain factor),
+you don't want to lose track of open positions. This script moves open balances
+from the old grid into the nearest-higher sellMin slot in the new grid.
+
+Typical workflow:
+1) Generate new grid to staging:
+   python gen_position_json.py ... --out positions.staging.json
+2) Migrate active -> staging:
+   python migrate_positions.py --active positions.json --new positions.staging.json --out positions.merged.json
+3) Promote merged:
+   cp positions.merged.json positions.json
+
+NOTE:
+- This is a best-effort mapping. Always sanity-check the merged file.
+"""
+
 import argparse
 import json
 

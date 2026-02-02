@@ -1,6 +1,28 @@
+#!/usr/bin/env python3
+"""Generate a grid file (positions JSON).
+
+This creates a geometric grid between `low` and `high` with `n` levels.
+
+By default it writes to a *staging* file (`positions.staging.json`) so you can
+review or migrate before replacing the live `positions.json`.
+
+USAGE:
+  python gen_position_json.py --low 1000 --high 64000 --n 36 --out positions.staging.json
+
+Then promote:
+  cp positions.staging.json positions.json
+
+Fields:
+- buyMin/buyMax: buy zone for each grid slot
+- sellMin: take profit threshold
+- stoploss: optional stoploss threshold (only used if STOPLOSS_ACTIVE is enabled)
+
+NOTE:
+- This script does not know token decimals; it works on the same quote-scale your bot uses.
+"""
+
 import argparse
 import json
-import os
 
 # Default filenames live next to main.py (same folder)
 DEFAULT_ACTIVE = "positions.json"
