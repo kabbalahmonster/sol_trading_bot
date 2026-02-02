@@ -1,0 +1,12 @@
+{
+  "discover_source": "pumpfun",
+  "discover_query": "pump",
+  "candidates_max": 300,
+  "min_liquidity_usd": 100000,
+  "min_age_minutes": 60,
+  "min_volume_h1_usd": 50000,
+  "hard_reject_freeze_authority": true,
+  "hard_reject_mint_authority": true,
+  "pump_bonus": 0.1,
+  "sleep_between_rugchecks_ms": 150
+}
