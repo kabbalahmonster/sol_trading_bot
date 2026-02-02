@@ -1,12 +1,17 @@
 {
-  "discover_source": "pumpfun",
-  "discover_query": "pump",
-  "candidates_max": 300,
+  "discover_source": "dexscreener",
+  "discover_queries": ["SOL", "USDC", "Raydium", "Orca"],
+  "candidates_max": 400,
+
   "min_liquidity_usd": 100000,
   "min_age_minutes": 60,
   "min_volume_h1_usd": 50000,
+
   "hard_reject_freeze_authority": true,
   "hard_reject_mint_authority": true,
+
+  "prefer_pump_suffix": true,
   "pump_bonus": 0.1,
+
   "sleep_between_rugchecks_ms": 150
 }

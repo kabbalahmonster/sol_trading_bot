@@ -42,7 +42,9 @@ DEFAULTS = {
     "chainId": "solana",
     "limit": 20,
     "discover_source": "pumpfun",  # pumpfun | jup | dexscreener
-    "discover_query": "pump",  # used for jup/dexscreener discovery
+    "discover_query": "pump",  # legacy single-query field
+    "discover_queries": ["SOL", "USDC", "Raydium", "Orca"],
+    "prefer_pump_suffix": True,
     "candidates_max": 300,  # how many pairs to consider before filtering
     "min_liquidity_usd": 100_000,
     "min_age_minutes": 60,
@@ -227,8 +229,7 @@ def compute_health_score(c: Candidate, report: Dict[str, Any], cfg: Dict[str, An
     # Age: saturate after ~24h.
     age_score = clamp(c.age_minutes / (60.0 * 24.0), 0.0, 1.0)
 
-    # RugCheck score: lower is better. score_normalised is 0..10 in some UIs;
-    # API provides score_normalised and score. We'll penalize if present.
+    # RugCheck score: lower is better.
     rug_norm = report.get("score_normalised")
     if rug_norm is None:
         rug_score = 0.5
@@ -236,14 +237,14 @@ def compute_health_score(c: Candidate, report: Dict[str, Any], cfg: Dict[str, An
     else:
         try:
             rn = float(rug_norm)
-            # Map: rn 0 -> 1.0, rn 10 -> 0.0
             rug_score = clamp(1.0 - (rn / 10.0), 0.0, 1.0)
         except Exception:
             rug_score = 0.5
             reasons.append("rugcheck score parse error")
 
-    # Bonus for pump mints (preference, not gate)
-    pump_bonus = cfg.get("pump_bonus", 0.0) if c.is_pump else 0.0
+    # pump suffix preference
+    prefer_pump = bool(cfg.get("prefer_pump_suffix", True))
+    pump_bonus = cfg.get("pump_bonus", 0.0) if (prefer_pump and c.is_pump) else 0.0
 
     # Weighting: emphasize liquidity + volume + rug score.
     score = (
@@ -257,7 +258,7 @@ def compute_health_score(c: Candidate, report: Dict[str, Any], cfg: Dict[str, An
     score = clamp(score, 0.0, 1.0)
 
     # explanations
-    if c.is_pump:
+    if prefer_pump and c.is_pump:
         reasons.append("pump mint bonus")
     if c.liquidity_usd < cfg["min_liquidity_usd"]:
         reasons.append(f"low liquidity ${c.liquidity_usd:,.0f}")
@@ -290,12 +291,15 @@ def main():
     cfg["limit"] = args.limit
 
     # Discovery:
-    # - For pump.fun, the pump.fun frontend API is the best discovery source.
-    # - Fallbacks: Jupiter search, then Dexscreener search.
+    # - pumpfun: pull live mints from pump.fun, then look up those mints on Dexscreener
+    # - jup: use Jupiter search to get mints, then look up on Dexscreener
+    # - dexscreener: use several broad queries (SOL/USDC/Raydium/Orca) to get high-activity pairs,
+    #   then locally prefer mints ending with 'pump'
 
     discover_source = (cfg.get("discover_source") or "pumpfun").lower().strip()
 
     ordered_mints: List[str] = []
+    pairs: List[Dict[str, Any]] = []
 
     if discover_source == "pumpfun":
         try:
@@ -304,26 +308,33 @@ def main():
             ordered_mints = []
 
     if not ordered_mints and discover_source in ("pumpfun", "jup"):
-        jup_items = jup_search(cfg["discover_query"], timeout=cfg["request_timeout"])
+        jup_items = jup_search(cfg.get("discover_query") or "pump", timeout=cfg["request_timeout"])
         mints: List[str] = []
         for item in jup_items:
             mid = (item.get("id") or "").strip()
             if mid:
                 mints.append(mid)
-        pump_mints = [m for m in mints if m.lower().endswith("pump")]
-        non_pump_mints = [m for m in mints if not m.lower().endswith("pump")]
-        ordered_mints = (pump_mints + non_pump_mints)[: cfg["candidates_max"]]
+        ordered_mints = mints[: cfg["candidates_max"]]
 
-    # As a final fallback, use Dexscreener search directly
-    pairs: List[Dict[str, Any]] = []
+    if discover_source == "dexscreener":
+        queries = cfg.get("discover_queries") or [cfg.get("discover_query") or "SOL"]
+        for q in queries:
+            try:
+                pairs.extend(dexscreener_search(str(q), timeout=cfg["request_timeout"]))
+            except Exception:
+                continue
+        pairs = pairs[: cfg["candidates_max"]]
+
     if ordered_mints:
         for mint in ordered_mints:
             try:
                 pairs.extend(dexscreener_pairs_for_token(mint, timeout=cfg["request_timeout"]))
             except Exception:
                 continue
-    else:
-        pairs = dexscreener_search(cfg["discover_query"], timeout=cfg["request_timeout"])[: cfg["candidates_max"]]
+
+    # If we still have nothing, last-ditch search
+    if not pairs:
+        pairs = dexscreener_search(cfg.get("discover_query") or "SOL", timeout=cfg["request_timeout"])[: cfg["candidates_max"]]
 
     # Parse + prefilter
     candidates: List[Candidate] = []
