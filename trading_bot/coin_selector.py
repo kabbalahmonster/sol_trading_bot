@@ -469,6 +469,8 @@ def main():
                     "age_minutes": c.age_minutes,
                     "dex": c.dex_url,
                     "dex_pair": c.pair.get("pairAddress"),
+                    "priceUsd": c.pair.get("priceUsd"),
+                    "priceNative": c.pair.get("priceNative"),
                     "priceChange": (c.pair.get("priceChange") or {}),
                     "txns": (c.pair.get("txns") or {}),
                     "rugcheck": {
@@ -548,6 +550,9 @@ def main():
                     "volume_h1_usd": x["volume_h1_usd"],
                     "age_minutes": x["age_minutes"],
                     "dex": x["dex"],
+                    "dex_pair": x.get("dex_pair"),
+                    "priceUsd": x.get("priceUsd"),
+                    "priceNative": x.get("priceNative"),
                 }
                 for x in passed_all
             ],
