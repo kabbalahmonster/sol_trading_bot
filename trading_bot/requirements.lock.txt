@@ -1,0 +1,30 @@
+# This is a "known-good" lock snapshot for fresh installs.
+# You can regenerate by creating a venv and running:
+#   pip install -r requirements.txt
+#   pip freeze > requirements.lock.txt
+#
+# NOTE: the *minimum* requirements are in requirements.txt.
+
+annotated-types==0.7.0
+anyio==4.12.1
+base58==2.1.1
+certifi==2026.1.4
+charset-normalizer==3.4.4
+construct==2.10.70
+construct-typing==0.7.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.11
+jsonalias==0.1.1
+jup-python-sdk==1.1.0
+pydantic==2.12.5
+pydantic_core==2.41.5
+python-dotenv==1.1.0
+requests==2.32.3
+solana==0.36.11
+solders==0.26.0
+typing_extensions==4.15.0
+typing-inspection==0.4.2
+urllib3==2.6.3
+websockets==15.0.1
