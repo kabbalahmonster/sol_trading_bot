@@ -5,3 +5,9 @@ trading_bot/history_rank.json
 trading_bot/history_rank.md
 trading_bot/swing_rank.json
 trading_bot/swing_rank.md
+
+# Runtime artifacts
+trading_bot/logs/
+trading_bot/__pycache__/
+trading_bot/.selector.lock
+trading_bot/.env
